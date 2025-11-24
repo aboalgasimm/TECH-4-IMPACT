@@ -1,0 +1,8 @@
+{
+  "name": "Volunteer Emergency Coordinator",
+  "description": "A comprehensive emergency management system featuring public reporting, volunteer dispatch, and AI-driven crowd prediction.",
+  "requestFramePermissions": [
+    "geolocation",
+    "microphone"
+  ]
+}
