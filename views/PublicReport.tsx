@@ -24,12 +24,11 @@ interface IWindow extends Window {
 }
 
 const PublicReport: React.FC = () => {
-  const { addReport, reports, volunteers, userProfile, logout, notify } = useApp();
+  const { addReport, reports, volunteers, userProfile, logout, notify, publicActiveReportId, setPublicActiveReportId } = useApp();
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [location, setLocation] = useState<{ lat: number, lng: number } | null>(null);
   const [locError, setLocError] = useState('');
-  const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [safetyAdvice, setSafetyAdvice] = useState<string[]>([]);
   
   // Voice Recognition State
@@ -88,8 +87,8 @@ const PublicReport: React.FC = () => {
   }, [notify]);
 
   const activeReport = useMemo(() => 
-    reports.find(r => r.id === activeReportId), 
-  [reports, activeReportId]);
+    reports.find(r => r.id === publicActiveReportId || ''), 
+  [reports, publicActiveReportId]);
 
   const assignedVolunteer = useMemo(() => 
     (activeReport?.assignedVolunteerId && activeReport.status === ReportStatus.ASSIGNED)
@@ -148,19 +147,19 @@ const PublicReport: React.FC = () => {
     setIsSubmitting(true);
     const { report, advice } = await addReport(description, location);
     setIsSubmitting(false);
-    setActiveReportId(report.id);
+    setPublicActiveReportId(report.id);
     setSafetyAdvice(advice);
     setDescription('');
   };
 
   const handleReset = () => {
-    setActiveReportId(null);
+    setPublicActiveReportId(null);
     setLocation(null);
     setSafetyAdvice([]);
   };
 
   // Tracking View
-  if (activeReportId) {
+  if (publicActiveReportId) {
     if (!activeReport) return <div className="text-white text-center p-10">جاري تحميل الحالة...</div>;
     
     const isResolved = activeReport.status === ReportStatus.RESOLVED;

@@ -41,6 +41,7 @@ export interface Volunteer {
   location: Coordinates;
   isOnline: boolean;
   currentTaskId?: string;
+  hasNewAssignment?: boolean;
   skills: string[];
 }
 

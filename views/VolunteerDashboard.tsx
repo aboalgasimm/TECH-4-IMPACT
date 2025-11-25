@@ -138,7 +138,7 @@ const SettingsModal = ({ onClose }: { onClose: () => void }) => {
 }
 
 const VolunteerDashboard: React.FC = () => {
-  const { currentUser, reports, toggleVolunteerStatus, resolveReport, acceptTask, logout } = useApp();
+  const { currentUser, reports, toggleVolunteerStatus, resolveReport, acceptTask, logout, focusedLocation } = useApp();
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -217,7 +217,7 @@ const VolunteerDashboard: React.FC = () => {
         <MapComponent 
           reports={availableReports.length > 0 ? availableReports : (currentTask ? [currentTask] : [])} 
           volunteers={[currentUser]} 
-          center={activeReport ? activeReport.location : currentUser.location}
+          center={focusedLocation ? focusedLocation : (activeReport ? activeReport.location : currentUser.location)}
           zoom={activeReport ? 16 : 14}
           onReportClick={(id) => setSelectedReportId(id)}
         />

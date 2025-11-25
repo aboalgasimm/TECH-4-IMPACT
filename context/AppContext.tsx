@@ -30,6 +30,11 @@ interface AppState {
   notify: (title: string, message: string, type: NotificationType) => void;
   removeNotification: (id: string) => void;
   previewTone: (tone: AlertTone) => void;
+  focusedLocation: { lat: number, lng: number } | null;
+  focusLocationByReportId: (reportId: string) => void;
+  clearFocus: () => void;
+  publicActiveReportId: string | null;
+  setPublicActiveReportId: (id: string | null) => void;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -50,6 +55,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [summary, setSummary] = useState<string>("النظام جاهز. بانتظار البلاغات...");
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [focusedLocation, setFocusedLocation] = useState<{ lat: number, lng: number } | null>(null);
+  const [publicActiveReportId, setPublicActiveReportId] = useState<string | null>(null);
   
   // Settings State
   const [volunteerSettings, setVolunteerSettings] = useState<VolunteerSettings>({
@@ -124,22 +131,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRole(selectedRole);
 
     if (selectedRole === Role.VOLUNTEER) {
-      // DEMO MODE: Always login as the first volunteer (Ali) to ensure 
-      // the user receives the auto-assigned tasks during the demo.
-      // We must grab the latest state of v1 from the volunteers array
+      // When logging in as volunteer, prefer a volunteer who already has a pending assignment
+      // or a flagged `hasNewAssignment`. This ensures the correct volunteer receives the notification
+      // even if assignments were made while they were not the active user.
       setVolunteers(prev => {
-        const v1 = prev.find(v => v.id === 'v1');
-        if (v1) {
-            setCurrentUser(v1);
-            setUserProfile({ name: v1.name, id: v1.id });
-            
-            // Check for pending tasks assigned to v1
-            const pendingTask = reports.find(r => r.assignedVolunteerId === v1.id && r.status === ReportStatus.PENDING);
-            if (pendingTask) {
-                // We need to use setTimeout because we are inside a state update callback potentially
-                setTimeout(() => notify('طلب استجابة', 'لديك بلاغ معلق بانتظار القبول!', 'alert'), 500);
-            }
+        // Find volunteer with pending assigned report
+        const withPending = prev.find(v => prev && reports.some(r => r.assignedVolunteerId === v.id && r.status === ReportStatus.PENDING));
+        const withFlag = prev.find(v => v.hasNewAssignment);
+        const candidate = withPending || withFlag || prev.find(v => v.id === 'v1') || prev[0];
+
+        if (candidate) {
+          setCurrentUser(candidate);
+          setUserProfile({ name: candidate.name, id: candidate.id });
+
+          const pendingTask = reports.find(r => r.assignedVolunteerId === candidate.id && r.status === ReportStatus.PENDING);
+          if (pendingTask || candidate.hasNewAssignment) {
+            setTimeout(() => notify('طلب استجابة', 'لديك بلاغ معلق بانتظار القبول!', 'alert'), 500);
+            // Clear the assignment flag for this volunteer
+            setVolunteers(prev2 => prev2.map(v => v.id === candidate.id ? { ...v, hasNewAssignment: false } : v));
+          }
         }
+
         return prev;
       });
     } else {
@@ -232,18 +244,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const assignVolunteer = (reportId: string, volunteerId: string) => {
     // Keep status PENDING until accepted
     setReports(prev => prev.map(r => r.id === reportId ? { ...r, assignedVolunteerId: volunteerId } : r));
-    setVolunteers(prev => prev.map(v => v.id === volunteerId ? { ...v, currentTaskId: reportId } : v));
-    
-    // If the currently logged in user is the one being assigned, update their state immediately
+
+    // Mark volunteer with pending assignment so they'll be notified when they become the active user
+    setVolunteers(prev => prev.map(v => v.id === volunteerId ? { ...v, currentTaskId: reportId, hasNewAssignment: true } : v));
+
+    // If the currently logged in user is the one being assigned, update their state immediately and notify
     if (currentUser?.id === volunteerId) {
-      setCurrentUser(prev => prev ? ({ ...prev, currentTaskId: reportId }) : null);
+      setCurrentUser(prev => prev ? ({ ...prev, currentTaskId: reportId, hasNewAssignment: false }) : null);
       // This notification will trigger the sound via the notify function
       notify('طلب استجابة', 'يوجد بلاغ قريب يحتاج استجابتك. الرجاء القبول.', 'alert');
+      // Clear the flag for that volunteer in the volunteers array as well
+      setVolunteers(prev => prev.map(v => v.id === volunteerId ? { ...v, hasNewAssignment: false } : v));
     }
   };
 
   const acceptTask = (reportId: string) => {
     if (!currentUser) return;
+
+    // Focus the map on the accepted report location (if exists)
+    const theReport = reports.find(r => r.id === reportId);
+    if (theReport) setFocusedLocation(theReport.location);
 
     // Update Report: Assign to current user and set status to ASSIGNED
     setReports(prev => prev.map(r => r.id === reportId ? { ...r, status: ReportStatus.ASSIGNED, assignedVolunteerId: currentUser.id } : r));
@@ -271,6 +291,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             notify('شكراً لك', 'تم إغلاق البلاغ بنجاح.', 'success');
         }
     }
+    // Clear focused map location if resolving the currently focused task
+    setFocusedLocation(prev => {
+      if (!prev) return prev;
+      if (report.location.lat === prev.lat && report.location.lng === prev.lng) return null;
+      return prev;
+    });
   };
 
   const toggleVolunteerStatus = () => {
@@ -303,7 +329,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <AppContext.Provider value={{
       role, setRole, userProfile, login, logout, reports, volunteers, currentUser, predictions, summary, notifications,
       volunteerSettings, updateVolunteerSettings, previewTone,
-      addReport, assignVolunteer, acceptTask, resolveReport, toggleVolunteerStatus, runAiAnalysis, notify, removeNotification
+      addReport, assignVolunteer, acceptTask, resolveReport, toggleVolunteerStatus, runAiAnalysis, notify, removeNotification,
+      focusedLocation, focusLocationByReportId: (reportId: string) => {
+        const r = reports.find(rr => rr.id === reportId);
+        if (r) setFocusedLocation(r.location);
+      },
+      clearFocus: () => setFocusedLocation(null)
+      ,
+      publicActiveReportId,
+      setPublicActiveReportId
     }}>
       {children}
     </AppContext.Provider>
