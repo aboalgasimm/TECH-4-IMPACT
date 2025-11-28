@@ -34,11 +34,35 @@ const PublicReport: React.FC = () => {
   // Voice Recognition State
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const [micSupported, setMicSupported] = useState<boolean>(true);
+  const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown');
 
   // Initialize Speech Recognition on Mount
   useEffect(() => {
     const { webkitSpeechRecognition, SpeechRecognition } = window as unknown as IWindow;
     const Recognition = SpeechRecognition || webkitSpeechRecognition;
+
+    // Feature detection for Web Speech API
+    if (!Recognition) {
+      setMicSupported(false);
+      setMicPermission('denied');
+      return;
+    }
+
+    // Check microphone permission state if supported by browser
+    try {
+      if ((navigator as any).permissions && (navigator as any).permissions.query) {
+        (navigator as any).permissions.query({ name: 'microphone' }).then((perm: any) => {
+          if (perm && perm.state) {
+            setMicPermission(perm.state === 'granted' ? 'granted' : (perm.state === 'denied' ? 'denied' : 'prompt'));
+          }
+        }).catch(() => {
+          setMicPermission('unknown');
+        });
+      }
+    } catch (e) {
+      setMicPermission('unknown');
+    }
 
     if (Recognition) {
       const recognition = new Recognition();
@@ -130,6 +154,12 @@ const PublicReport: React.FC = () => {
       return;
     }
 
+    // If permission was explicitly denied, prompt the user to re-enable it
+    if (micPermission === 'denied') {
+      notify('الميكروفون معطل', 'يجب تمكين الوصول للميكروفون من إعدادات المتصفح للنقر والاستماع.', 'alert');
+      return;
+    }
+
     if (isListening) {
       recognitionRef.current.stop();
     } else {
@@ -137,7 +167,27 @@ const PublicReport: React.FC = () => {
         recognitionRef.current.start();
       } catch (error) {
         console.warn("Speech start error:", error);
+        // As a fallback, try requesting mic permission directly
+        requestMicPermission();
       }
+    }
+  };
+
+  const requestMicPermission = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      notify('غير مدعوم', 'لا يدعم متصفحك الوصول للميكروفون عبر getUserMedia.', 'alert');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // stop immediately - we only needed to prompt permission
+      stream.getTracks().forEach(t => t.stop());
+      setMicPermission('granted');
+      notify('تم التمكين', 'تم تفعيل الميكروفون. يمكنك الآن التحدث.', 'success');
+    } catch (err) {
+      console.warn('getUserMedia error', err);
+      setMicPermission('denied');
+      notify('رفض الوصول', 'تم رفض الوصول للميكروفون. يرجى تمكينه من إعدادات المتصفح.', 'alert');
     }
   };
 

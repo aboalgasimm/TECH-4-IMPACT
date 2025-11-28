@@ -131,25 +131,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRole(selectedRole);
 
     if (selectedRole === Role.VOLUNTEER) {
-      // When logging in as volunteer, prefer a volunteer who already has a pending assignment
-      // or a flagged `hasNewAssignment`. This ensures the correct volunteer receives the notification
-      // even if assignments were made while they were not the active user.
+      // If a name is provided (e.g., via Google sign-in), create a new volunteer account
+      // and set them as the current user. This enables OAuth-based sign-ins for volunteers.
+      if (name && name !== 'متطوع سريع' && name !== 'v1') {
+        const newVol: Volunteer = {
+          id: 'u_' + Math.random().toString(36).substr(2, 9),
+          name,
+          location: { lat: 24.4672, lng: 39.6102 },
+          isOnline: true,
+          skills: []
+        };
+        setVolunteers(prev => [...prev, newVol]);
+        setCurrentUser(newVol);
+        setUserProfile({ name: newVol.name, id: newVol.id });
+        return;
+      }
+      // When logging in as volunteer, prefer a volunteer who already has a task (currentTaskId)
+      // or a volunteer who was assigned a report (either PENDING or ASSIGNED). This keeps the
+      // volunteer's active task visible after switching between roles.
       setVolunteers(prev => {
-        // Find volunteer with pending assigned report
-        const withPending = prev.find(v => prev && reports.some(r => r.assignedVolunteerId === v.id && r.status === ReportStatus.PENDING));
-        const withFlag = prev.find(v => v.hasNewAssignment);
-        const candidate = withPending || withFlag || prev.find(v => v.id === 'v1') || prev[0];
+        // Prefer volunteers who already have a currentTaskId
+        const withCurrentTask = prev.find(v => v.currentTaskId);
+
+        // Find any report that is assigned (pending or already accepted) to someone
+        const assignedReport = reports.find(r => (r.status === ReportStatus.PENDING || r.status === ReportStatus.ASSIGNED) && r.assignedVolunteerId);
+
+        let candidate: Volunteer | undefined = withCurrentTask || (assignedReport ? prev.find(v => v.id === assignedReport.assignedVolunteerId) : undefined);
+
+        // If still no candidate, fall back to flagged volunteer or default v1
+        if (!candidate) candidate = prev.find(v => v.hasNewAssignment) || prev.find(v => v.id === 'v1') || prev[0];
 
         if (candidate) {
-          setCurrentUser(candidate);
-          setUserProfile({ name: candidate.name, id: candidate.id });
+          // Update volunteers array to ensure candidate has correct currentTaskId
+          const updated = prev.map(v => {
+            if (v.id === candidate!.id) {
+              const currentTaskId = v.currentTaskId || (assignedReport && assignedReport.assignedVolunteerId === v.id ? assignedReport.id : undefined);
+              return { ...v, currentTaskId, hasNewAssignment: false };
+            }
+            return v;
+          });
 
-          const pendingTask = reports.find(r => r.assignedVolunteerId === candidate.id && r.status === ReportStatus.PENDING);
-          if (pendingTask || candidate.hasNewAssignment) {
+          // Set current user from updated list to ensure consistency
+          const updatedCandidate = updated.find(v => v.id === candidate!.id)!;
+          setCurrentUser(updatedCandidate);
+          setUserProfile({ name: updatedCandidate.name, id: updatedCandidate.id });
+
+          // Notify the volunteer if they have a pending or assigned task
+          const pendingTask = reports.find(r => r.assignedVolunteerId === updatedCandidate.id && (r.status === ReportStatus.PENDING || r.status === ReportStatus.ASSIGNED));
+          if (pendingTask) {
             setTimeout(() => notify('طلب استجابة', 'لديك بلاغ معلق بانتظار القبول!', 'alert'), 500);
-            // Clear the assignment flag for this volunteer
-            setVolunteers(prev2 => prev2.map(v => v.id === candidate.id ? { ...v, hasNewAssignment: false } : v));
           }
+
+          return updated;
         }
 
         return prev;
